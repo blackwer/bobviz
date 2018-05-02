@@ -38,17 +38,13 @@ while True:
             if data:
                 print('sending frame back to the client')
 
-                msgarr = []
-                for i in range(0,2000):
-                    msgarr.append('sphero ({},{},{}) ({},{},{}) {}\n'.format(50*np.random.rand() - 25,
-                                                                             50*np.random.rand() - 25,
-                                                                             50*np.random.rand() - 25,
-                                                                             0.0,
-                                                                             0.0,
-                                                                             1.0,
-                                                                             10.0))
-                msg = ''.join(msgarr).encode('ascii')
-                connection.sendall(len(msg).to_bytes(4, byteorder=sys.byteorder))
+                msg = np.zeros(2000*(3+3+1))
+                for i in range(0, 2000):
+                    msg[i*7:(i+1)*7] = np.append(50*np.random.rand(3)-25, np.array([0,0,1.0,10.0]))
+
+
+                connection.sendall(msg.nbytes.to_bytes(4, byteorder=sys.byteorder))
+
                 print('sending message of length {}'.format(len(msg)))
                 connection.sendall(msg)
             else:

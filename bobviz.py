@@ -3,6 +3,7 @@
 from direct.showbase.ShowBase import ShowBase
 from direct.task import Task
 from direct.gui.OnscreenText import OnscreenText
+from direct.gui.DirectSlider import DirectSlider
 
 from panda3d.core import LightNode, TextNode
 from panda3d.core import PointLight, AmbientLight
@@ -19,6 +20,9 @@ import copy
 import math
 import ast
 import time
+import struct
+
+import numpy as np
 
 # Function to put title on the screen.
 def addTitle(text):
@@ -74,6 +78,8 @@ class BobViz(ShowBase):
         self.win.setClearColorActive(True)
         self.win.setClearColor(VBase4(1, 1, 1, 1))
 
+        self.spheroColor = (0.8,0.0, 0.0, 1.0)
+
         # Enable anti-aliasing
         render.setAntialias(AntialiasAttrib.MAuto)
         
@@ -82,9 +88,9 @@ class BobViz(ShowBase):
         newSphero = render.attachNewNode(groupid)
         self.spheroBase.instanceTo(newSphero)
 
-        self.UpdateSphero(newSphero, pos, u, L, diameter)
+        self.updateSphero(newSphero, pos, u, L, diameter)
 
-    def UpdateSphero(self, node, pos, u, L, diameter):
+    def updateSphero(self, node, pos, u, L, diameter):
         node.set_shader_input("L", L)
         node.set_shader_input("diameter", diameter)
         node.setPos(pos)
@@ -107,15 +113,33 @@ class BobViz(ShowBase):
         # Make a diffuse material to color our spherocylinder
         myMaterial = Material()
         myMaterial.setAmbient((0.0, 0.0, 0.0, 0.0)) 
-        myMaterial.setDiffuse((0.8, 0.0, 0.0, 1.0))
+        myMaterial.setDiffuse(self.spheroColor)
         node.setMaterial(myMaterial)
-
 
 
 print("starting")
 t = BobViz()
-        
-# Create a UDS socket
+
+def changeColor(colorSlot, group):
+    color = list(t.spheroColor)
+    color[colorSlot] = slider[group][colorSlot]['value']
+    t.spheroColor = tuple(color)
+    nodes = render.findAllMatches(group)
+    for node in nodes:
+        node.getMaterial().setDiffuse(t.spheroColor)
+
+slider = dict()
+slider["Spheros"] = []
+slider["Spheros"].append(DirectSlider(range=(0,1), value=t.spheroColor[0], scale=0.25, pos=(-1.0, 0.0, -0.85),
+                         command=changeColor, extraArgs=(0,"Spheros")))
+slider["Spheros"].append(DirectSlider(range=(0,1), value=t.spheroColor[1], scale=0.25, pos=(-1.0, 0.0, -0.90),
+                         command=changeColor, extraArgs=(1,"Spheros")))
+slider["Spheros"].append(DirectSlider(range=(0,1), value=t.spheroColor[2], scale=0.25, pos=(-1.0, 0.0, -0.95),
+                         command=changeColor, extraArgs=(2,"Spheros")))
+
+
+
+# Create a unix domain socket
 sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
 
 # Connect the socket to the port where the server is listening
@@ -134,37 +158,37 @@ def listener(task):
         sock.sendall(message)
 
         # Read in integer size of frame
-        size = sock.recv(4) 
-        size_in_bytes = int.from_bytes(size, byteorder=sys.byteorder)
+        size_in_bytes = int.from_bytes(sock.recv(4), byteorder=sys.byteorder)
         print('Receiving message of length {}'.format(size_in_bytes))
 
-        # Receive frame and convert to ASCII. Divide into chunks because it struggles with large
-        # frames
+        # Receive frame. Divide into chunks because it struggles with large frames
         received = 0
         recvlist = []
         starttime = time.time()
+        
         while received < size_in_bytes:
             data = sock.recv(4096)
             received += len(data)
-            recvlist.append(data.decode('ascii'))
-            recvmessage = ''.join(recvlist)
+            recvlist.append(data)
+
+        buf = b''.join(recvlist)
         print('Message transfer took {}'.format(time.time() - starttime))
 
+        nfloats = int(size_in_bytes / 8)
+        msgarr = np.array(struct.unpack('{}d'.format(nfloats), buf))
+        
         # Replace existing nodes
         starttime = time.time()
         nodes = render.findAllMatches("Spheros")
-        print(nodes.get_num_paths())
+
         oid = 0
-        for line in recvmessage.splitlines():
-            elements = line.split(' ')
-
-            # This is extremely slow. Will just move to a binary format with headers possibly
-            pos = ast.literal_eval(elements[1])
-            u = ast.literal_eval(elements[2])
-            L = ast.literal_eval(elements[3])
-
+        nspheros = int(nfloats / 7)
+        for i in range(0, nspheros):
+            pos = tuple(msgarr[i*7+0:i*7+3])
+            u   = tuple(msgarr[i*7+3:i*7+6])
+            L   =       msgarr[i*7+6]
             if oid < nodes.get_num_paths():
-                t.UpdateSphero(node=nodes.getPath(oid),pos=pos,u=u,L=L,diameter=1.0)
+                t.updateSphero(node=nodes.getPath(oid),pos=pos,u=u,L=L,diameter=1.0)
                 oid += 1
             else:
                 t.addSphero(pos=pos,u=u,L=L)
@@ -176,7 +200,7 @@ def listener(task):
             NodePath.remove_node(nodes[oid])
 
         print('Removal of old objects took {}'.format(time.time() - starttime))
-          
+        
     finally:
         return task.again
 
